@@ -14,11 +14,11 @@ if [ ! -d backend/.venv ] || [ ! -d frontend/node_modules ]; then
 fi
 
 # Make sure PostgreSQL is awake before the backend tries to create its database.
+# shellcheck source=lib/postgres.sh
+. "$(dirname "$0")/lib/postgres.sh"
 if ! pg_isready -q 2>/dev/null; then
   echo "Starting PostgreSQL ..."
-  PG_FORMULA="$(brew list --formula 2>/dev/null | grep -m1 '^postgresql@' || echo postgresql@18)"
-  brew services start "$PG_FORMULA" >/dev/null 2>&1
-  for _ in $(seq 1 20); do pg_isready -q 2>/dev/null && break; sleep 1; done
+  pg_ensure_running || { echo -e "${RED}"; pg_failure_help; echo -e "${OFF}"; exit 1; }
 fi
 
 free_port() {

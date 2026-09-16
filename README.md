@@ -18,7 +18,8 @@ your photos anywhere. It is free.
 
 ## Before you start
 
-You need a **Mac**. That is genuinely it — the setup script installs the rest.
+You need a **Mac**. That is genuinely it — the setup script installs the rest,
+including the right version of Python if the one you have is not suitable.
 
 Set aside about **15 minutes** for the one-time setup, and roughly **1.5 GB** of
 disk space. Most of that time is your Mac downloading things in the background,
@@ -64,7 +65,9 @@ Now wait. You will see progress messages with green ticks. The installer:
 - installs **Homebrew** (the standard tool for installing Mac software),
 - installs and starts **PostgreSQL** (the database that stores the results),
 - installs **pgvector** (the part that makes "find similar" possible),
-- installs **Python** and **Node.js** if you don't have them,
+- installs **Python** and **Node.js** if you don't have them — and if your
+  Python is too old or too new, it installs a version that works and uses that
+  one, leaving your existing Python untouched,
 - downloads the **CLIP** model — the AI that actually looks at your pictures.
 
 **Things that may happen along the way:**
@@ -180,6 +183,12 @@ macOS protects some folders (Desktop, Documents, Photos). Go to
 The count of "failed" files in the progress bar covers broken or unreadable
 files. They are skipped safely and everything else still indexes.
 
+**"Could not start PostgreSQL", or it mentions a lock file**
+A previous database server did not shut down cleanly, which leaves a lock file
+behind. Restarting your Mac clears it safely. If you have **two** PostgreSQL
+installations — one from Homebrew and one from postgresql.org — they fight over
+the same port, and you should keep only the one you actually use.
+
 **I want to start completely fresh**
 Database tab → **Delete all indexed data**. Your photos are unaffected.
 
@@ -213,6 +222,7 @@ the pictures.
 semantic_image_finder/
 ├── setup.sh            Run once to install everything
 ├── start.sh            Run to use the app
+├── lib/postgres.sh     Shared helper that gets the database running
 ├── backend/            Python: the AI model, database and API
 │   ├── app/
 │   │   ├── main.py     The API the web page talks to

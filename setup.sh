@@ -10,6 +10,9 @@ ok()   { echo -e "${GREEN}  ✓ $1${OFF}"; }
 warn() { echo -e "${YELLOW}  ! $1${OFF}"; }
 die()  { echo -e "${RED}  ✗ $1${OFF}"; exit 1; }
 
+# shellcheck source=lib/postgres.sh
+. "$(dirname "$0")/lib/postgres.sh"
+
 echo -e "${BLUE}Semantic Image Finder - setup${OFF}"
 echo "This installs everything the app needs. It may take 5-10 minutes the first time."
 
@@ -41,22 +44,81 @@ fi
 ok "pgvector installed"
 
 step "Starting the database"
-brew services start "$PG_FORMULA" >/dev/null 2>&1 || true
-for _ in $(seq 1 20); do
-  if pg_isready -q 2>/dev/null; then break; fi
-  sleep 1
-done
-pg_isready -q 2>/dev/null || die "PostgreSQL did not start. Try: brew services restart $PG_FORMULA"
-ok "PostgreSQL is running"
+if pg_ensure_running; then
+  ok "PostgreSQL is running"
+else
+  echo
+  pg_failure_help
+  die "PostgreSQL is not accepting connections yet"
+fi
 
 # ---------------------------------------------------------------- Python
 step "Checking Python"
-command -v python3 >/dev/null 2>&1 || brew install python@3.11
-PYV="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-ok "Python $PYV"
+
+# PyTorch 2.5 publishes ready-made packages for Python 3.10, 3.11 and 3.12 only.
+# Older Python cannot run the code; newer Python has nothing to download. So we
+# need an interpreter inside that range, and we install one if there isn't any.
+PY_MIN=10
+PY_MAX=12
+PY_WANTED="3.11 3.12 3.10"   # tried in this order
+PY_INSTALL="python@3.11"     # installed if none of the above are present
+
+# Minor version number of a given interpreter, or nothing if it isn't usable.
+py_minor() {
+  "$1" -c 'import sys; print(sys.version_info[1] if sys.version_info[0] == 3 else "")' 2>/dev/null
+}
+
+# True when this interpreter is a version the packages actually support.
+py_usable() {
+  local minor
+  minor="$(py_minor "$1")"
+  [ -n "$minor" ] && [ "$minor" -ge "$PY_MIN" ] && [ "$minor" -le "$PY_MAX" ]
+}
+
+# First supported interpreter we can find, searching PATH and Homebrew's own
+# directory (a brew-installed python is not always on PATH).
+find_python() {
+  local ver cand
+  for ver in $PY_WANTED; do
+    # Several routes, because Homebrew's layout differs between versions and
+    # between Apple Silicon and Intel Macs. The first that works wins.
+    for cand in "python$ver" \
+                "$(brew --prefix "python@$ver" 2>/dev/null)/bin/python$ver" \
+                "$(brew --prefix "python@$ver" 2>/dev/null)/libexec/bin/python3"; do
+      if command -v "$cand" >/dev/null 2>&1 && py_usable "$cand"; then
+        command -v "$cand"; return 0
+      fi
+    done
+  done
+  # Last resort: the default python3, if it happens to be in range.
+  if command -v python3 >/dev/null 2>&1 && py_usable python3; then
+    command -v python3; return 0
+  fi
+  return 1
+}
+
+PYTHON_BIN="$(find_python || true)"
+
+if [ -z "$PYTHON_BIN" ]; then
+  FOUND="$(python3 --version 2>/dev/null || echo 'not installed')"
+  warn "Python 3.$PY_MIN-3.$PY_MAX is required, but you have: $FOUND"
+  echo "  Installing $PY_INSTALL alongside it (your existing Python is left alone) ..."
+  brew install "$PY_INSTALL"
+  hash -r 2>/dev/null || true   # forget any cached command locations
+  PYTHON_BIN="$(find_python || true)"
+fi
+
+[ -n "$PYTHON_BIN" ] || die "Could not find or install Python 3.$PY_MIN-3.$PY_MAX. Try running: brew install $PY_INSTALL"
+ok "Using Python $("$PYTHON_BIN" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])')  ($PYTHON_BIN)"
 
 step "Installing Python packages (this is the slow part - CLIP and PyTorch)"
-python3 -m venv backend/.venv
+# If a previous run built the environment with a Python we no longer support,
+# throw it away rather than trying to install into it.
+if [ -x backend/.venv/bin/python ] && ! py_usable backend/.venv/bin/python; then
+  warn "The existing environment used an unsupported Python - rebuilding it"
+  rm -rf backend/.venv
+fi
+"$PYTHON_BIN" -m venv backend/.venv
 backend/.venv/bin/pip install --upgrade pip --quiet
 backend/.venv/bin/pip install -r backend/requirements.txt --quiet
 ok "Python packages installed"
